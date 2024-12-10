@@ -408,7 +408,7 @@ class TextEncoder(nn.Module):  # 将文本音素序列转换为声学特征，�
         x = self.encoder(x, x_mask)
         mu = self.proj_m(x) * x_mask  # 为每个音素的隐向量预测一个表示分布的均值mu，[batch_size, n_feats, max_text_length]
 
-        x_dp = torch.detach(x)  # 将x从计算图中分离，持续时间预测器单独训练，防止反向传播时更新x
+        x_dp = torch.detach(x)  # 将x从计算图中分离，持续时间预测器单独训练，防止反向传播时更新x；loss_duration → logw → proj_w → x_dp(停止)，loss_duration梯度反向传播时会在x_dp停止，进而不会影响x
         logw = self.proj_w(x_dp, x_mask)  # 预测每个音素的对数域持续时间，[batch_size, 1, max_text_length]
 
         return mu, logw, x_mask

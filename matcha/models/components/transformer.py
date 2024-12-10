@@ -37,15 +37,15 @@ class SnakeBeta(nn.Module):
         Initialization.
         INPUT:
             - in_features: shape of the input
-            - alpha - trainable parameter that controls frequency
-            - beta - trainable parameter that controls magnitude
+            - alpha - trainable parameter that controls frequency，控制周期性分量的频率
+            - beta - trainable parameter that controls magnitude，控制周期性分量的幅度
             alpha is initialized to 1 by default, higher values = higher-frequency.
             beta is initialized to 1 by default, higher values = higher-magnitude.
             alpha will be trained along with the rest of your model.
         """
         super().__init__()
         self.in_features = out_features if isinstance(out_features, list) else [out_features]
-        self.proj = LoRACompatibleLinear(in_features, out_features)
+        self.proj = LoRACompatibleLinear(in_features, out_features)  # 兼容LoRA的线性层
 
         # initialize alpha
         self.alpha_logscale = alpha_logscale
@@ -75,6 +75,7 @@ class SnakeBeta(nn.Module):
             alpha = self.alpha
             beta = self.beta
 
+        # Snake激活函数计算
         x = x + (1.0 / (beta + self.no_div_by_zero)) * torch.pow(torch.sin(x * alpha), 2)
 
         return x
@@ -134,7 +135,7 @@ class FeedForward(nn.Module):
         return hidden_states
 
 
-@maybe_allow_in_graph
+@maybe_allow_in_graph  # 允许本类实例化的模型可以在torch.compile()或torch.jit.trace()中使用
 class BasicTransformerBlock(nn.Module):
     r"""
     A basic Transformer block.
@@ -235,6 +236,7 @@ class BasicTransformerBlock(nn.Module):
         self._chunk_size = None
         self._chunk_dim = 0
 
+    # 支持分块进行feed_forward计算，节省显存
     def set_chunk_feed_forward(self, chunk_size: Optional[int], dim: int):
         # Sets chunk feed-forward
         self._chunk_size = chunk_size
