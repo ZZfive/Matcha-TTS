@@ -22,11 +22,11 @@ class LayerNorm(nn.Module):
         self.beta = torch.nn.Parameter(torch.zeros(channels))
 
     def forward(self, x):
-        n_dims = len(x.shape)
-        mean = torch.mean(x, 1, keepdim=True)
-        variance = torch.mean((x - mean) ** 2, 1, keepdim=True)
+        n_dims = len(x.shape)  # 维度长度，二维、三维还是四维
+        mean = torch.mean(x, 1, keepdim=True)  # 保持维度均值
+        variance = torch.mean((x - mean) ** 2, 1, keepdim=True)  # 保持维度方差
 
-        x = (x - mean) * torch.rsqrt(variance + self.eps)
+        x = (x - mean) * torch.rsqrt(variance + self.eps)  # 标准化，就是减去均值，除以方差
 
         shape = [1, -1] + [1] * (n_dims - 2)
         x = x * self.gamma.view(*shape) + self.beta.view(*shape)
@@ -67,6 +67,7 @@ class ConvReluNorm(nn.Module):
         return x * x_mask
 
 
+# 时长预测器
 class DurationPredictor(nn.Module):
     def __init__(self, in_channels, filter_channels, kernel_size, p_dropout):
         super().__init__()
@@ -102,6 +103,7 @@ class RotaryPositionalEmbeddings(nn.Module):
     That is, it organizes the $d$ features as $\frac{d}{2}$ pairs.
     Each pair can be considered a coordinate in a 2D plane, and the encoding will rotate it
     by an angle depending on the position of the token.
+    将d维特征看作$\frac{d}{2}$个二维平面上的一个坐标，根据token的位置对坐标进行旋转变换，旋转角度取决于token的位置，进而使得模型能感知相对位置信息
     """
 
     def __init__(self, d: int, base: int = 10_000):
@@ -111,10 +113,10 @@ class RotaryPositionalEmbeddings(nn.Module):
         """
         super().__init__()
 
-        self.base = base
-        self.d = int(d)
-        self.cos_cached = None
-        self.sin_cached = None
+        self.base = base  # 用于计算θ的基数,默认10000
+        self.d = int(d)  # 特征维度
+        self.cos_cached = None  # 缓存cos值
+        self.sin_cached = None  # 缓存sin值
 
     def _build_cache(self, x: torch.Tensor):
         r"""
@@ -122,18 +124,18 @@ class RotaryPositionalEmbeddings(nn.Module):
         """
         # Return if cache is already built
         if self.cos_cached is not None and x.shape[0] <= self.cos_cached.shape[0]:
-            return
+            return  # 如果缓存已存在且长度足够,直接返回
 
         # Get sequence length
         seq_len = x.shape[0]
 
-        # $\Theta = {\theta_i = 10000^{-\frac{2(i-1)}{d}}, i \in [1, 2, ..., \frac{d}{2}]}$
+        # $\Theta = {\theta_i = 10000^{-\frac{2(i-1)}{d}}, i \in [1, 2, ..., \frac{d}{2}]}$  θi = 10000^(-2(i-1)/d)
         theta = 1.0 / (self.base ** (torch.arange(0, self.d, 2).float() / self.d)).to(x.device)
 
-        # Create position indexes `[0, 1, ..., seq_len - 1]`
+        # Create position indexes `[0, 1, ..., seq_len - 1]`，生成位置索引
         seq_idx = torch.arange(seq_len, device=x.device).float().to(x.device)
 
-        # Calculate the product of position index and $\theta_i$
+        # Calculate the product of position index and $\theta_i$；计算位置索引与θi的外积
         idx_theta = torch.einsum("n,d->nd", seq_idx, theta)
 
         # Concatenate so that for row $m$ we have
@@ -161,13 +163,13 @@ class RotaryPositionalEmbeddings(nn.Module):
         self._build_cache(x)
 
         # Split the features, we can choose to apply rotary embeddings only to a partial set of features.
-        x_rope, x_pass = x[..., : self.d], x[..., self.d :]
+        x_rope, x_pass = x[..., : self.d], x[..., self.d :]  # 在特征维度上将x分为两部分，x_rope是旋转后的特征，x_pass是未旋转的特征
 
         # Calculate
         # $[-x^{(\frac{d}{2} + 1)}, -x^{(\frac{d}{2} + 2)}, ..., -x^{(d)}, x^{(1)}, x^{(2)}, ..., x^{(\frac{d}{2})}]$
         neg_half_x = self._neg_half(x_rope)
 
-        x_rope = (x_rope * self.cos_cached[: x.shape[0]]) + (neg_half_x * self.sin_cached[: x.shape[0]])
+        x_rope = (x_rope * self.cos_cached[: x.shape[0]]) + (neg_half_x * self.sin_cached[: x.shape[0]])  # 计算旋转后的特征
 
         return rearrange(torch.cat((x_rope, x_pass), dim=-1), "t b h d -> b h t d")
 
@@ -178,10 +180,10 @@ class MultiHeadAttention(nn.Module):
         channels,
         out_channels,
         n_heads,
-        heads_share=True,
+        heads_share=True,  # 头部是否共享
         p_dropout=0.0,
-        proximal_bias=False,
-        proximal_init=False,
+        proximal_bias=False,  # 是否使用近邻偏置
+        proximal_init=False,  # conv_k是否复制conv_q的初始值
     ):
         super().__init__()
         assert channels % n_heads == 0
@@ -194,12 +196,13 @@ class MultiHeadAttention(nn.Module):
         self.p_dropout = p_dropout
         self.attn = None
 
-        self.k_channels = channels // n_heads
-        self.conv_q = torch.nn.Conv1d(channels, channels, 1)
-        self.conv_k = torch.nn.Conv1d(channels, channels, 1)
-        self.conv_v = torch.nn.Conv1d(channels, channels, 1)
+        self.k_channels = channels // n_heads  # 每个头通道数，就是将隐向量的维度除以头数
+        self.conv_q = torch.nn.Conv1d(channels, channels, 1)  # 卷积层，用于计算query
+        self.conv_k = torch.nn.Conv1d(channels, channels, 1)  # 卷积层，用于计算key
+        self.conv_v = torch.nn.Conv1d(channels, channels, 1)  # 卷积层，用于计算value
 
         # from https://nn.labml.ai/transformers/rope/index.html
+        # 因为可能不是自注意力计算，query和key的维度可能不同，所以需要对query和key使用不同的旋转位置嵌入
         self.query_rotary_pe = RotaryPositionalEmbeddings(self.k_channels * 0.5)
         self.key_rotary_pe = RotaryPositionalEmbeddings(self.k_channels * 0.5)
 
@@ -229,6 +232,7 @@ class MultiHeadAttention(nn.Module):
         key = rearrange(key, "b (h c) t-> b h t c", h=self.n_heads)
         value = rearrange(value, "b (h c) t-> b h t c", h=self.n_heads)
 
+        # 对query和key进行旋转位置嵌入
         query = self.query_rotary_pe(query)
         key = self.key_rotary_pe(key)
 
@@ -246,7 +250,7 @@ class MultiHeadAttention(nn.Module):
         return output, p_attn
 
     @staticmethod
-    def _attention_bias_proximal(length):
+    def _attention_bias_proximal(length):  # 实现了一个距离感知的偏置项，使得注意力机制更倾向于关注临近位置的token
         r = torch.arange(length, dtype=torch.float32)
         diff = torch.unsqueeze(r, 0) - torch.unsqueeze(r, 1)
         return torch.unsqueeze(torch.unsqueeze(-torch.log1p(torch.abs(diff)), 0), 0)
@@ -325,15 +329,15 @@ class Encoder(nn.Module):
         return x
 
 
-class TextEncoder(nn.Module):
+class TextEncoder(nn.Module):  # 将文本音素序列转换为声学特征，并预测每个音速的持续时间
     def __init__(
         self,
         encoder_type,
         encoder_params,
         duration_predictor_params,
         n_vocab,
-        n_spks=1,
-        spk_emb_dim=128,
+        n_spks=1,  # speaker数量
+        spk_emb_dim=128,  # speaker嵌入维度
     ):
         super().__init__()
         self.encoder_type = encoder_type
@@ -343,7 +347,7 @@ class TextEncoder(nn.Module):
         self.spk_emb_dim = spk_emb_dim
         self.n_spks = n_spks
 
-        self.emb = torch.nn.Embedding(n_vocab, self.n_channels)
+        self.emb = torch.nn.Embedding(n_vocab, self.n_channels)  # 嵌入层，将音素索引映射到n_channels维度的向量
         torch.nn.init.normal_(self.emb.weight, 0.0, self.n_channels**-0.5)
 
         if encoder_params.prenet:
@@ -366,14 +370,14 @@ class TextEncoder(nn.Module):
             encoder_params.kernel_size,
             encoder_params.p_dropout,
         )
-
-        self.proj_m = torch.nn.Conv1d(self.n_channels + (spk_emb_dim if n_spks > 1 else 0), self.n_feats, 1)
+        # 将speaker的特征直接拼接到输入的特征上
+        self.proj_m = torch.nn.Conv1d(self.n_channels + (spk_emb_dim if n_spks > 1 else 0), self.n_feats, 1)  # 声学特征投影层
         self.proj_w = DurationPredictor(
             self.n_channels + (spk_emb_dim if n_spks > 1 else 0),
             duration_predictor_params.filter_channels_dp,
             duration_predictor_params.kernel_size,
             duration_predictor_params.p_dropout,
-        )
+        )  # 持续时间预测器
 
     def forward(self, x, x_lengths, spks=None):
         """Run forward pass to the transformer based encoder and duration predictor
@@ -396,15 +400,15 @@ class TextEncoder(nn.Module):
         """
         x = self.emb(x) * math.sqrt(self.n_channels)
         x = torch.transpose(x, 1, -1)
-        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
+        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)  # [batch_size, 1, max_text_length]
 
         x = self.prenet(x, x_mask)
         if self.n_spks > 1:
-            x = torch.cat([x, spks.unsqueeze(-1).repeat(1, 1, x.shape[-1])], dim=1)
+            x = torch.cat([x, spks.unsqueeze(-1).repeat(1, 1, x.shape[-1])], dim=1)  # 将speaker的特征直接拼接到文本因素特征上
         x = self.encoder(x, x_mask)
-        mu = self.proj_m(x) * x_mask
+        mu = self.proj_m(x) * x_mask  # 为每个音素的隐向量预测一个表示分布的均值mu，[batch_size, n_feats, max_text_length]
 
-        x_dp = torch.detach(x)
-        logw = self.proj_w(x_dp, x_mask)
+        x_dp = torch.detach(x)  # 将x从计算图中分离，持续时间预测器单独训练，防止反向传播时更新x
+        logw = self.proj_w(x_dp, x_mask)  # 预测每个音素的对数域持续时间，[batch_size, 1, max_text_length]
 
         return mu, logw, x_mask

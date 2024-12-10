@@ -4,11 +4,12 @@ import numpy as np
 import torch
 
 
+# 生成一个 序列掩码（sequence mask），用于表示一个长度为 length 的序列在最大长度 max_length 下的有效部分
 def sequence_mask(length, max_length=None):
     if max_length is None:
         max_length = length.max()
     x = torch.arange(max_length, dtype=length.dtype, device=length.device)
-    return x.unsqueeze(0) < length.unsqueeze(1)
+    return x.unsqueeze(0) < length.unsqueeze(1)  # 生成一个布尔掩码，位置小于length的为True，否则为False
 
 
 def fix_len_compatibility(length, num_downsamplings_in_unet=2):
