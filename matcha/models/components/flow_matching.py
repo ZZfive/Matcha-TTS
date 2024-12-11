@@ -12,10 +12,10 @@ log = get_pylogger(__name__)
 class BASECFM(torch.nn.Module, ABC):
     def __init__(
         self,
-        n_feats,
-        cfm_params,
-        n_spks=1,
-        spk_emb_dim=128,
+        n_feats,  # 特征维度
+        cfm_params,  # 连续流匹配参数
+        n_spks=1,  # 说话人数量
+        spk_emb_dim=128,  # 说话人嵌入维度
     ):
         super().__init__()
         self.n_feats = n_feats
@@ -48,13 +48,13 @@ class BASECFM(torch.nn.Module, ABC):
             sample: generated mel-spectrogram
                 shape: (batch_size, n_feats, mel_timesteps)
         """
-        z = torch.randn_like(mu) * temperature
-        t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)
-        return self.solve_euler(z, t_span=t_span, mu=mu, mask=mask, spks=spks, cond=cond)
+        z = torch.randn_like(mu) * temperature  # 生成初始噪声
+        t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)  # 创建时间步序列
+        return self.solve_euler(z, t_span=t_span, mu=mu, mask=mask, spks=spks, cond=cond)  # 使用欧拉求解器从噪声生成目标音频特征
 
     def solve_euler(self, x, t_span, mu, mask, spks, cond):
         """
-        Fixed euler solver for ODEs.
+        Fixed euler solver for ODEs.  # 固定步长的欧拉求解器
         Args:
             x (torch.Tensor): random noise
             t_span (torch.Tensor): n_timesteps interpolated
@@ -74,10 +74,10 @@ class BASECFM(torch.nn.Module, ABC):
         sol = []
 
         for step in range(1, len(t_span)):
-            dphi_dt = self.estimator(x, mask, mu, t, spks, cond)
+            dphi_dt = self.estimator(x, mask, mu, t, spks, cond)  # 当前时间步Flow对时间t的倒数，就是向量场
 
-            x = x + dt * dphi_dt
-            t = t + dt
+            x = x + dt * dphi_dt  # 欧拉更新步骤
+            t = t + dt  # 更新时间
             sol.append(x)
             if step < len(t_span) - 1:
                 dt = t_span[step + 1] - t
@@ -88,9 +88,9 @@ class BASECFM(torch.nn.Module, ABC):
         """Computes diffusion loss
 
         Args:
-            x1 (torch.Tensor): Target
+            x1 (torch.Tensor): Target，目标mel谱图
                 shape: (batch_size, n_feats, mel_timesteps)
-            mask (torch.Tensor): target mask
+            mask (torch.Tensor): target mask，目标掩码
                 shape: (batch_size, 1, mel_timesteps)
             mu (torch.Tensor): output of encoder
                 shape: (batch_size, n_feats, mel_timesteps)
@@ -107,11 +107,11 @@ class BASECFM(torch.nn.Module, ABC):
         # random timestep
         t = torch.rand([b, 1, 1], device=mu.device, dtype=mu.dtype)
         # sample noise p(x_0)
-        z = torch.randn_like(x1)
+        z = torch.randn_like(x1)  # 从先验分布中采样的随机噪声
 
-        y = (1 - (1 - self.sigma_min) * t) * z + t * x1
-        u = x1 - (1 - self.sigma_min) * z
-
+        y = (1 - (1 - self.sigma_min) * t) * z + t * x1  # 基于OT-CFM推导出的流的表达式
+        u = x1 - (1 - self.sigma_min) * z  # 因为是对ODE建模，目标向量场u就是t对时间t的导数
+        # 先使用estimator结合encoder输出的mu、y等值进一步精确预测量场，再与目标向量场u计算损失
         loss = F.mse_loss(self.estimator(y, mask, mu, t.squeeze(), spks), u, reduction="sum") / (
             torch.sum(mask) * u.shape[1]
         )

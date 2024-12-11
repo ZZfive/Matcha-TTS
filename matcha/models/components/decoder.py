@@ -18,7 +18,7 @@ class SinusoidalPosEmb(torch.nn.Module):
         assert self.dim % 2 == 0, "SinusoidalPosEmb requires dim to be even"
 
     def forward(self, x, scale=1000):
-        if x.ndim < 1:
+        if x.ndim < 1:  # 如果传入的x为标量，则将其转换为1维张量
             x = x.unsqueeze(0)
         device = x.device
         half_dim = self.dim // 2
@@ -46,7 +46,7 @@ class Block1D(torch.nn.Module):
 class ResnetBlock1D(torch.nn.Module):
     def __init__(self, dim, dim_out, time_emb_dim, groups=8):
         super().__init__()
-        self.mlp = torch.nn.Sequential(nn.Mish(), torch.nn.Linear(time_emb_dim, dim_out))
+        self.mlp = torch.nn.Sequential(nn.Mish(), torch.nn.Linear(time_emb_dim, dim_out))  # 将时间嵌入维度映射到输出维度
 
         self.block1 = Block1D(dim, dim_out, groups=groups)
         self.block2 = Block1D(dim_out, dim_out, groups=groups)
@@ -55,7 +55,7 @@ class ResnetBlock1D(torch.nn.Module):
 
     def forward(self, x, mask, time_emb):
         h = self.block1(x, mask)
-        h += self.mlp(time_emb).unsqueeze(-1)
+        h += self.mlp(time_emb).unsqueeze(-1)  # 将时间嵌入维度映射到输出维度
         h = self.block2(h, mask)
         output = h + self.res_conv(x * mask)
         return output
@@ -66,10 +66,11 @@ class Downsample1D(nn.Module):
         super().__init__()
         self.conv = torch.nn.Conv1d(dim, dim, 3, 2, 1)
 
-    def forward(self, x):
-        return self.conv(x)
+    def forward(self, x):  # 输入x维度[batch_size, channels, sequence_length]；维度顺序可能不是如此，但目的是将sequence_length减半
+        return self.conv(x)  # 输出维度[batch_size, channels, sequence_length//2]
 
 
+# 用于扩散模型前向的时间步嵌入
 class TimestepEmbedding(nn.Module):
     def __init__(
         self,
@@ -103,7 +104,7 @@ class TimestepEmbedding(nn.Module):
             self.post_act = get_activation(post_act_fn)
 
     def forward(self, sample, condition=None):
-        if condition is not None:
+        if condition is not None:   # 条件融合
             sample = sample + self.cond_proj(condition)
         sample = self.linear_1(sample)
 
@@ -140,13 +141,13 @@ class Upsample1D(nn.Module):
         self.name = name
 
         self.conv = None
-        if use_conv_transpose:
+        if use_conv_transpose:  # 转置卷积
             self.conv = nn.ConvTranspose1d(channels, self.out_channels, 4, 2, 1)
-        elif use_conv:
+        elif use_conv:  # 使用最邻近插值+普通卷积
             self.conv = nn.Conv1d(self.channels, self.out_channels, 3, padding=1)
 
     def forward(self, inputs):
-        assert inputs.shape[1] == self.channels
+        assert inputs.shape[1] == self.channels  # 确保输入张量通道数与初始化时一样
         if self.use_conv_transpose:
             return self.conv(inputs)
 
@@ -218,6 +219,7 @@ class Decoder(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
 
+        # 时间嵌入
         self.time_embeddings = SinusoidalPosEmb(in_channels)
         time_embed_dim = channels[0] * 4
         self.time_mlp = TimestepEmbedding(
@@ -226,9 +228,9 @@ class Decoder(nn.Module):
             act_fn="silu",
         )
 
-        self.down_blocks = nn.ModuleList([])
-        self.mid_blocks = nn.ModuleList([])
-        self.up_blocks = nn.ModuleList([])
+        self.down_blocks = nn.ModuleList([])  # 下采样块
+        self.mid_blocks = nn.ModuleList([])  # 中间块
+        self.up_blocks = nn.ModuleList([])  # 上采样块
 
         output_channel = in_channels
         for i in range(len(channels)):  # pylint: disable=consider-using-enumerate
@@ -377,15 +379,15 @@ class Decoder(nn.Module):
         Returns:
             _type_: _description_
         """
-
+        # 时间嵌入
         t = self.time_embeddings(t)
         t = self.time_mlp(t)
 
-        x = pack([x, mu], "b * t")[0]
+        x = pack([x, mu], "b * t")[0]  # 将x和mu在特征维度上拼接
 
         if spks is not None:
-            spks = repeat(spks, "b c -> b c t", t=x.shape[-1])
-            x = pack([x, spks], "b * t")[0]
+            spks = repeat(spks, "b c -> b c t", t=x.shape[-1])  # 将speaker特征在时间维度上重复
+            x = pack([x, spks], "b * t")[0] # 再将x和spks在特征维度上拼接
 
         hiddens = []
         masks = [mask]
