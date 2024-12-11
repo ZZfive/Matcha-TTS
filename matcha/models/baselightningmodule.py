@@ -16,23 +16,24 @@ from matcha.utils.utils import plot_tensor
 log = utils.get_pylogger(__name__)
 
 
+# 训练TTS的训练基类
 class BaseLightningClass(LightningModule, ABC):
-    def update_data_statistics(self, data_statistics):
+    def update_data_statistics(self, data_statistics):  # 更新mel谱图的均值和标准差
         if data_statistics is None:
             data_statistics = {
                 "mel_mean": 0.0,
                 "mel_std": 1.0,
             }
-
+        # 存储非参数张量，不会计算梯度，模型保存时也不会存储
         self.register_buffer("mel_mean", torch.tensor(data_statistics["mel_mean"]))
         self.register_buffer("mel_std", torch.tensor(data_statistics["mel_std"]))
 
-    def configure_optimizers(self) -> Any:
-        optimizer = self.hparams.optimizer(params=self.parameters())
-        if self.hparams.scheduler not in (None, {}):
+    def configure_optimizers(self) -> Any:  # 配置优化器和学习率调度器
+        optimizer = self.hparams.optimizer(params=self.parameters())  # 使用hparams中的优化器配置
+        if self.hparams.scheduler not in (None, {}):  # 如果scheduler不为空
             scheduler_args = {}
             # Manage last epoch for exponential schedulers
-            if "last_epoch" in inspect.signature(self.hparams.scheduler.scheduler).parameters:
+            if "last_epoch" in inspect.signature(self.hparams.scheduler.scheduler).parameters:  # 支持从检查点恢复训练时的epoch计数
                 if hasattr(self, "ckpt_loaded_epoch"):
                     current_epoch = self.ckpt_loaded_epoch - 1
                 else:
@@ -53,7 +54,7 @@ class BaseLightningClass(LightningModule, ABC):
 
         return {"optimizer": optimizer}
 
-    def get_losses(self, batch):
+    def get_losses(self, batch):  # 计算损失
         x, x_lengths = batch["x"], batch["x_lengths"]
         y, y_lengths = batch["y"], batch["y_lengths"]
         spks = batch["spks"]
@@ -84,7 +85,7 @@ class BaseLightningClass(LightningModule, ABC):
             on_step=True,
             prog_bar=True,
             logger=True,
-            sync_dist=True,
+            sync_dist=True,  # 确保多GPU训练时，日志同步
         )
 
         self.log(
@@ -165,7 +166,7 @@ class BaseLightningClass(LightningModule, ABC):
 
         return total_loss
 
-    def on_validation_end(self) -> None:
+    def on_validation_end(self) -> None:  # 在验证结束时生成样本并可视化
         if self.trainer.is_global_zero:
             one_batch = next(iter(self.trainer.val_dataloaders))
             if self.current_epoch == 0:
@@ -206,5 +207,5 @@ class BaseLightningClass(LightningModule, ABC):
                     dataformats="HWC",
                 )
 
-    def on_before_optimizer_step(self, optimizer):
+    def on_before_optimizer_step(self, optimizer):  # 记录模型参数的梯度范数
         self.log_dict({f"grad_norm/{k}": v for k, v in grad_norm(self, norm_type=2).items()})

@@ -60,7 +60,7 @@ class MatchaTTS(BaseLightningClass):  # 🍵
             n_spks,
             spk_emb_dim,
         )
-
+        # 基于Flow matching的解码器
         self.decoder = CFM(
             in_channels=2 * encoder.encoder_params.n_feats,
             out_channel=encoder.encoder_params.n_feats,
@@ -118,20 +118,26 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
         mu_x, logw, x_mask = self.encoder(x, x_lengths, spks)
 
-        w = torch.exp(logw) * x_mask
-        w_ceil = torch.ceil(w) * length_scale
-        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
-        y_max_length = y_lengths.max()
-        y_max_length_ = fix_len_compatibility(y_max_length)
+        w = torch.exp(logw) * x_mask  # 将对数持续时间转为实际持续时间
+        w_ceil = torch.ceil(w) * length_scale  # length_scale用于控制生成音频的速度
+        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()  # 计算每个样本的mel谱图长度，所有预测长度至少为1
+        y_max_length = y_lengths.max()  # 计算所有样本mel谱图长度的最大值
+        y_max_length_ = fix_len_compatibility(y_max_length)  # 确保y_max_length是2的幂次
 
         # Using obtained durations `w` construct alignment map `attn`
-        y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(x_mask.dtype)
-        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
-        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)
+        y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(x_mask.dtype)  # 为mel谱图构建长度掩码  shape: [batch_size, 1, max_mel_length]
+        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)  # 为文本和mel谱图构建注意力掩码  shape: [batch_size, 1, text_length, mel_length]
+        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)  # 使用预测的持续时间生成单调对齐路径  shape: [batch_size, 1, text_length, mel_length]
 
-        # Align encoded text and get mu_y
+        # Align encoded text and get mu_y；将注意力图和编码器输出相乘得到对齐后的特征
+        # attn.squeeze(1).transpose(1, 2): [batch_size, mel_length, text_length]
+        # mu_x.transpose(1, 2): [batch_size, text_length, n_feats]
+        # mu_y: [batch_size, mel_length, n_feats]
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
+        
+        # 调整维度顺序；shape: [batch_size, n_feats, mel_length]
         mu_y = mu_y.transpose(1, 2)
+        # 截取到实际需要的长度
         encoder_outputs = mu_y[:, :, :y_max_length]
 
         # Generate sample tracing the probability flow
@@ -161,7 +167,7 @@ class MatchaTTS(BaseLightningClass):  # 🍵
             x (torch.Tensor): batch of texts, converted to a tensor with phoneme embedding ids.
                 shape: (batch_size, max_text_length)
             x_lengths (torch.Tensor): lengths of texts in batch.
-                shape: (batch_size,)
+                shape: (batch_size,)  同一个batch中不同text的长度不同
             y (torch.Tensor): batch of corresponding mel-spectrograms.
                 shape: (batch_size, n_feats, max_mel_length)
             y_lengths (torch.Tensor): lengths of mel-spectrograms in batch.
@@ -182,11 +188,11 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         y_mask = sequence_mask(y_lengths, y_max_length).unsqueeze(1).to(x_mask)
         attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
 
-        if self.use_precomputed_durations:
+        if self.use_precomputed_durations:  # 使用外部预先计算好的持续时间构建时间转移路径
             attn = generate_path(durations.squeeze(1), attn_mask.squeeze(1))
         else:
             # Use MAS to find most likely alignment `attn` between text and mel-spectrogram
-            with torch.no_grad():
+            with torch.no_grad():  # 使用MAS搜索持续时间转移路径
                 const = -0.5 * math.log(2 * math.pi) * self.n_feats
                 factor = -0.5 * torch.ones(mu_x.shape, dtype=mu_x.dtype, device=mu_x.device)
                 y_square = torch.matmul(factor.transpose(1, 2), y**2)
@@ -200,7 +206,7 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         # Compute loss between predicted log-scaled durations and those obtained from MAS
         # refered to as prior loss in the paper
         logw_ = torch.log(1e-8 + torch.sum(attn.unsqueeze(1), -1)) * x_mask
-        dur_loss = duration_loss(logw, logw_, x_lengths)
+        dur_loss = duration_loss(logw, logw_, x_lengths)  # 计算持续时间存世
 
         # Cut a small segment of mel-spectrogram in order to increase batch size
         #   - "Hack" taken from Grad-TTS, in case of Grad-TTS, we cannot train batch size 32 on a 24GB GPU without it
@@ -231,14 +237,14 @@ class MatchaTTS(BaseLightningClass):  # 🍵
 
         # Align encoded text with mel-spectrogram and get mu_y segment
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
-        mu_y = mu_y.transpose(1, 2)
+        mu_y = mu_y.transpose(1, 2)  # mu_y就是经过时间长度对齐后的预测mel谱图
 
         # Compute loss of the decoder
         diff_loss, _ = self.decoder.compute_loss(x1=y, mask=y_mask, mu=mu_y, spks=spks, cond=cond)
 
         if self.prior_loss:
-            prior_loss = torch.sum(0.5 * ((y - mu_y) ** 2 + math.log(2 * math.pi)) * y_mask)
-            prior_loss = prior_loss / (torch.sum(y_mask) * self.n_feats)
+            prior_loss = torch.sum(0.5 * ((y - mu_y) ** 2 + math.log(2 * math.pi)) * y_mask)  # 应用掩码求和
+            prior_loss = prior_loss / (torch.sum(y_mask) * self.n_feats)  # 归一化
         else:
             prior_loss = 0
 

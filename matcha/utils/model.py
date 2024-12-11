@@ -13,12 +13,12 @@ def sequence_mask(length, max_length=None):
 
 
 def fix_len_compatibility(length, num_downsamplings_in_unet=2):
-    factor = torch.scalar_tensor(2).pow(num_downsamplings_in_unet)
-    length = (length / factor).ceil() * factor
+    factor = torch.scalar_tensor(2).pow(num_downsamplings_in_unet)  # 计算总下采样因子
+    length = (length / factor).ceil() * factor  # 向上取整到最近的可整除因子的长度
     if not torch.onnx.is_in_onnx_export():
-        return length.int().item()
+        return length.int().item()  # 如果不在ONNX导出模式，则返回整数
     else:
-        return length
+        return length  # 如果ONNX导出模式，则返回浮点数
 
 
 def convert_pad_shape(pad_shape):
@@ -30,14 +30,14 @@ def convert_pad_shape(pad_shape):
 def generate_path(duration, mask):
     device = duration.device
 
-    b, t_x, t_y = mask.shape
-    cum_duration = torch.cumsum(duration, 1)
+    b, t_x, t_y = mask.shape  # [batch_size, text_length, mel_length]
+    cum_duration = torch.cumsum(duration, 1)  # 计算累计持续时间
     path = torch.zeros(b, t_x, t_y, dtype=mask.dtype).to(device=device)
 
     cum_duration_flat = cum_duration.view(b * t_x)
     path = sequence_mask(cum_duration_flat, t_y).to(mask.dtype)
     path = path.view(b, t_x, t_y)
-    path = path - torch.nn.functional.pad(path, convert_pad_shape([[0, 0], [1, 0], [0, 0]]))[:, :-1]
+    path = path - torch.nn.functional.pad(path, convert_pad_shape([[0, 0], [1, 0], [0, 0]]))[:, :-1]  # 通过错位相减得到每个时刻的注意力分布
     path = path * mask
     return path
 
