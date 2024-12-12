@@ -2,7 +2,7 @@
 from matcha.text import cleaners
 from matcha.text.symbols import symbols
 
-# Mappings from symbol to numeric ID and vice versa:
+# Mappings from symbol to numeric ID and vice versa:  类似于llm中vocab，目前使用的预定义符号集，当前只支持英文
 _symbol_to_id = {s: i for i, s in enumerate(symbols)}
 _id_to_symbol = {i: s for i, s in enumerate(symbols)}  # pylint: disable=unnecessary-comprehension
 
@@ -21,7 +21,7 @@ def text_to_sequence(text, cleaner_names):
     """
     sequence = []
 
-    clean_text = _clean_text(text, cleaner_names)
+    clean_text = _clean_text(text, cleaner_names)  # 此处就已经将文本转换为音素了
     for symbol in clean_text:
         symbol_id = _symbol_to_id[symbol]
         sequence += [symbol_id]

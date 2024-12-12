@@ -48,8 +48,8 @@ class BASECFM(torch.nn.Module, ABC):
             sample: generated mel-spectrogram
                 shape: (batch_size, n_feats, mel_timesteps)
         """
-        z = torch.randn_like(mu) * temperature  # 生成初始噪声
-        t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)  # 创建时间步序列
+        z = torch.randn_like(mu) * temperature  # 生成初始噪声，shape: [batch_size, n_feats, mel_timesteps]，如[1, 80, 848]
+        t_span = torch.linspace(0, 1, n_timesteps + 1, device=mu.device)  # 创建时间步序列，理论上n_timesteps越大，结果越好，耗时越长
         return self.solve_euler(z, t_span=t_span, mu=mu, mask=mask, spks=spks, cond=cond)  # 使用欧拉求解器从噪声生成目标音频特征
 
     def solve_euler(self, x, t_span, mu, mask, spks, cond):
@@ -74,13 +74,13 @@ class BASECFM(torch.nn.Module, ABC):
         sol = []
 
         for step in range(1, len(t_span)):
-            dphi_dt = self.estimator(x, mask, mu, t, spks, cond)  # 当前时间步Flow对时间t的倒数，就是向量场
+            dphi_dt = self.estimator(x, mask, mu, t, spks, cond)  # 当前时间步Flow对时间t的倒数，就是向量场；shape不变，如[1, 80, 848]
 
-            x = x + dt * dphi_dt  # 欧拉更新步骤
+            x = x + dt * dphi_dt  # 基于初始噪声进行欧拉更新步骤；shape不变，如[1, 80, 848]
             t = t + dt  # 更新时间
             sol.append(x)
             if step < len(t_span) - 1:
-                dt = t_span[step + 1] - t
+                dt = t_span[step + 1] - t  # 更新步长；适合步长非固定的情况
 
         return sol[-1]
 

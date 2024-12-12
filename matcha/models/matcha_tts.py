@@ -120,29 +120,29 @@ class MatchaTTS(BaseLightningClass):  # 🍵
 
         w = torch.exp(logw) * x_mask  # 将对数持续时间转为实际持续时间
         w_ceil = torch.ceil(w) * length_scale  # length_scale用于控制生成音频的速度
-        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()  # 计算每个样本的mel谱图长度，所有预测长度至少为1
+        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()  # 计算每个样本的mel谱图长度，所有预测长度至少为1；就是将每条文本音素序列中每个音素对应的持续时间求和，就是最终预测的mel谱图长度
         y_max_length = y_lengths.max()  # 计算所有样本mel谱图长度的最大值
         y_max_length_ = fix_len_compatibility(y_max_length)  # 确保y_max_length是2的幂次
 
         # Using obtained durations `w` construct alignment map `attn`
-        y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(x_mask.dtype)  # 为mel谱图构建长度掩码  shape: [batch_size, 1, max_mel_length]
-        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)  # 为文本和mel谱图构建注意力掩码  shape: [batch_size, 1, text_length, mel_length]
-        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)  # 使用预测的持续时间生成单调对齐路径  shape: [batch_size, 1, text_length, mel_length]
+        y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(x_mask.dtype)  # 为mel谱图构建长度掩码  shape: [batch_size, 1, max_mel_length]，如[1, 1, 848]
+        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)  # 为文本和mel谱图构建注意力掩码  shape: [batch_size, 1, text_length, mel_length]，如[1, 1, 311, 848]
+        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)  # 使用预测的持续时间生成单调对齐路径  shape: [batch_size, 1, text_length, mel_length]，如[1, 1, 311, 848]
 
         # Align encoded text and get mu_y；将注意力图和编码器输出相乘得到对齐后的特征
         # attn.squeeze(1).transpose(1, 2): [batch_size, mel_length, text_length]
         # mu_x.transpose(1, 2): [batch_size, text_length, n_feats]
-        # mu_y: [batch_size, mel_length, n_feats]
+        # mu_y: [batch_size, mel_length, n_feats]，如[1, 848, 80]
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
         
-        # 调整维度顺序；shape: [batch_size, n_feats, mel_length]
+        # 调整维度顺序；shape: [batch_size, n_feats, mel_length]，如[1, 80, 848]
         mu_y = mu_y.transpose(1, 2)
         # 截取到实际需要的长度
         encoder_outputs = mu_y[:, :, :y_max_length]
 
-        # Generate sample tracing the probability flow
-        decoder_outputs = self.decoder(mu_y, y_mask, n_timesteps, temperature, spks)
-        decoder_outputs = decoder_outputs[:, :, :y_max_length]
+        # Generate sample tracing the probability flow；输出shape不变，如[1, 80, 848]
+        decoder_outputs = self.decoder(mu_y, y_mask, n_timesteps, temperature, spks)  # 此处的mu_y就是预测的初始mel谱图，decoder内部是CFM，通过FLow matching将先验分布(一般是标准正态分布)转化为最终的mel谱图分布，这个过程中基于此处预测的mel谱图构建输入
+        decoder_outputs = decoder_outputs[:, :, :y_max_length]  # 截取到实际需要的长度，[1, 80, 845]
 
         t = (dt.datetime.now() - t).total_seconds()
         rtf = t * 22050 / (decoder_outputs.shape[-1] * 256)

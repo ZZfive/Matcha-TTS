@@ -380,10 +380,10 @@ class Decoder(nn.Module):
             _type_: _description_
         """
         # 时间嵌入
-        t = self.time_embeddings(t)
-        t = self.time_mlp(t)
+        t = self.time_embeddings(t)  # [batch_size, in_channels]，如[1, 160]
+        t = self.time_mlp(t)  # [batch_size, time_embed_dim]，如[1, 1024]
 
-        x = pack([x, mu], "b * t")[0]  # 将x和mu在特征维度上拼接
+        x = pack([x, mu], "b * t")[0]  # 将x和mu在特征维度上拼接；[batch_size, n_feats + n_feats, mel_timesteps]，如[1, 160, 848]
 
         if spks is not None:
             spks = repeat(spks, "b c -> b c t", t=x.shape[-1])  # 将speaker特征在时间维度上重复
@@ -392,54 +392,54 @@ class Decoder(nn.Module):
         hiddens = []
         masks = [mask]
         for resnet, transformer_blocks, downsample in self.down_blocks:
-            mask_down = masks[-1]
-            x = resnet(x, mask_down, t)
-            x = rearrange(x, "b c t -> b t c")
-            mask_down = rearrange(mask_down, "b 1 t -> b t")
+            mask_down = masks[-1]  # 获取当前的mask
+            x = resnet(x, mask_down, t)  # 将x和mask_down在时间维度上拼接，然后通过resnet进行处理, [batch_size, some_dim, n_feats]，如[1, 256, 848]
+            x = rearrange(x, "b c t -> b t c")  # 将x的维度顺序调整为[batch_size, n_feats, some_dim]，如[1, 848, 256]
+            mask_down = rearrange(mask_down, "b 1 t -> b t")  # 将mask_down的维度顺序调整为[batch_size, mel_timesteps]，如[1, 848]
             for transformer_block in transformer_blocks:
                 x = transformer_block(
                     hidden_states=x,
                     attention_mask=mask_down,
                     timestep=t,
                 )
-            x = rearrange(x, "b t c -> b c t")
-            mask_down = rearrange(mask_down, "b t -> b 1 t")
+            x = rearrange(x, "b t c -> b c t")  # 将x的维度顺序调整为[batch_size, n_feats, some_dim]，如[1, 256, 848]
+            mask_down = rearrange(mask_down, "b t -> b 1 t")  # 将mask_down的维度顺序调整为[batch_size, 1, mel_timesteps]，如[1, 1, 848]
             hiddens.append(x)  # Save hidden states for skip connections
-            x = downsample(x * mask_down)
-            masks.append(mask_down[:, :, ::2])
+            x = downsample(x * mask_down)  # 将x和mask_down在时间维度上拼接，然后通过downsample进行处理, mel长度维度会减半, 如[1, 256, 424]
+            masks.append(mask_down[:, :, ::2])  # 将mask_down在时间维度上每隔一个元素取一个元素，得到新的mask，mel长度维度会减半, 如[1, 1, 424]
 
         masks = masks[:-1]
-        mask_mid = masks[-1]
+        mask_mid = masks[-1]  # 获取当前的mask
 
         for resnet, transformer_blocks in self.mid_blocks:
-            x = resnet(x, mask_mid, t)
-            x = rearrange(x, "b c t -> b t c")
-            mask_mid = rearrange(mask_mid, "b 1 t -> b t")
+            x = resnet(x, mask_mid, t)  # 将x和mask_mid在时间维度上拼接，然后通过resnet进行处理, 如[1, 256, 424]
+            x = rearrange(x, "b c t -> b t c")  # 将x的维度顺序调整为[1, 424, 256]
+            mask_mid = rearrange(mask_mid, "b 1 t -> b t")  # 将mask_mid的维度顺序调整为[1, 424]
             for transformer_block in transformer_blocks:
                 x = transformer_block(
                     hidden_states=x,
                     attention_mask=mask_mid,
                     timestep=t,
                 )
-            x = rearrange(x, "b t c -> b c t")
-            mask_mid = rearrange(mask_mid, "b t -> b 1 t")
+            x = rearrange(x, "b t c -> b c t")  # 将x的维度顺序调整为[1, 256, 424]
+            mask_mid = rearrange(mask_mid, "b t -> b 1 t")  # 将mask_mid的维度顺序调整为[1, 1, 424]
 
         for resnet, transformer_blocks, upsample in self.up_blocks:
-            mask_up = masks.pop()
-            x = resnet(pack([x, hiddens.pop()], "b * t")[0], mask_up, t)
-            x = rearrange(x, "b c t -> b t c")
-            mask_up = rearrange(mask_up, "b 1 t -> b t")
+            mask_up = masks.pop()  # 获取当前的mask
+            x = resnet(pack([x, hiddens.pop()], "b * t")[0], mask_up, t)  # 将x和hiddens.pop()在特征维度上拼接，然后通过resnet进行处理, 如[1, 256, 424]
+            x = rearrange(x, "b c t -> b t c")  # 将x的维度顺序调整为[1, 424, 256]
+            mask_up = rearrange(mask_up, "b 1 t -> b t")  # 将mask_up的维度顺序调整为[1, 424]
             for transformer_block in transformer_blocks:
                 x = transformer_block(
                     hidden_states=x,
                     attention_mask=mask_up,
                     timestep=t,
                 )
-            x = rearrange(x, "b t c -> b c t")
-            mask_up = rearrange(mask_up, "b t -> b 1 t")
-            x = upsample(x * mask_up)
+            x = rearrange(x, "b t c -> b c t")  # 将x的维度顺序调整为[1, 256, 424]
+            mask_up = rearrange(mask_up, "b t -> b 1 t")  # 将mask_up的维度顺序调整为[1, 1, 424]
+            x = upsample(x * mask_up)  # 将x和mask_up在时间维度上拼接，然后通过upsample进行处理, mel长度维度会翻倍, 如[1, 256, 848]
 
-        x = self.final_block(x, mask_up)
-        output = self.final_proj(x * mask_up)
+        x = self.final_block(x, mask_up)  # 将x和mask_up在时间维度上拼接，然后通过final_block进行处理, 如[1, 256, 848]
+        output = self.final_proj(x * mask_up)  # 将x和mask_up在时间维度上拼接，然后通过final_proj进行处理, 如[1, 80, 848]
 
         return output * mask

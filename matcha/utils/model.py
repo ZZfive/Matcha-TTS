@@ -30,15 +30,15 @@ def convert_pad_shape(pad_shape):
 def generate_path(duration, mask):
     device = duration.device
 
-    b, t_x, t_y = mask.shape  # [batch_size, text_length, mel_length]
-    cum_duration = torch.cumsum(duration, 1)  # 计算累计持续时间
+    b, t_x, t_y = mask.shape  # [batch_size, text_length, mel_length]，如[1, 311, 848]
+    cum_duration = torch.cumsum(duration, 1)  # 按行计算每行的累计持续时间，[batch_size, text_length]，如[1, 311]
     path = torch.zeros(b, t_x, t_y, dtype=mask.dtype).to(device=device)
 
-    cum_duration_flat = cum_duration.view(b * t_x)
-    path = sequence_mask(cum_duration_flat, t_y).to(mask.dtype)
-    path = path.view(b, t_x, t_y)
-    path = path - torch.nn.functional.pad(path, convert_pad_shape([[0, 0], [1, 0], [0, 0]]))[:, :-1]  # 通过错位相减得到每个时刻的注意力分布
-    path = path * mask
+    cum_duration_flat = cum_duration.view(b * t_x)  # 将cum_duration展平，[batch_size * text_length]，如[1 * 311]
+    path = sequence_mask(cum_duration_flat, t_y).to(mask.dtype)  # 生成一个布尔掩码，位置小于cum_duration_flat的为True，否则为False，[batch_size * text_length, mel_length]，如[1 * 311, 848]
+    path = path.view(b, t_x, t_y)  # 将path恢复到原来的形状，[batch_size, text_length, mel_length]，如[1, 311, 848]
+    path = path - torch.nn.functional.pad(path, convert_pad_shape([[0, 0], [1, 0], [0, 0]]))[:, :-1]  # 通过错位相减得到每个时刻的注意力分布，[batch_size, text_length, mel_length]，如[1, 311, 848]
+    path = path * mask  # 将注意力分布与掩码相乘，得到最终的注意力分布，[batch_size, text_length, mel_length]，如[1, 311, 848]
     return path
 
 

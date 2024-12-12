@@ -30,7 +30,7 @@ global_phonemizer = phonemizer.backend.EspeakBackend(
     with_stress=True,
     language_switch="remove-flags",
     logger=critical_logger,
-)
+)  # 初始化phonemizer，用于将文本转换为音素
 
 
 # Regular expression matching whitespace:

@@ -128,7 +128,7 @@ def get_metric_value(metric_dict: Dict[str, Any], metric_name: str) -> float:
     return metric_value
 
 
-def intersperse(lst, item):
+def intersperse(lst, item):  # 给音素序列中的元素间插入空白符号
     # Adds blank symbol
     result = [item] * (len(lst) * 2 + 1)
     result[1::2] = lst

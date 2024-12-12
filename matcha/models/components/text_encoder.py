@@ -398,17 +398,17 @@ class TextEncoder(nn.Module):  # 将文本音素序列转换为声学特征，�
             x_mask (torch.Tensor): mask for the text input
                 shape: (batch_size, 1, max_text_length)
         """
-        x = self.emb(x) * math.sqrt(self.n_channels)
-        x = torch.transpose(x, 1, -1)
-        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)  # [batch_size, 1, max_text_length]
+        x = self.emb(x) * math.sqrt(self.n_channels)  # [batch_size, text_length] -> [batch_size, text_length, n_channels], 如[1, 311] -> [1, 311, 192]
+        x = torch.transpose(x, 1, -1)  # [batch_size, text_length, n_channels] -> [batch_size, n_channels, text_length], 如[1, 311, 192] -> [1, 192, 311]
+        x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)  # [batch_size, 1, max_text_length], 如[1, 1, 311]
 
-        x = self.prenet(x, x_mask)
+        x = self.prenet(x, x_mask)  # [batch_size, n_channels, text_length], 如[1, 192, 311]
         if self.n_spks > 1:
             x = torch.cat([x, spks.unsqueeze(-1).repeat(1, 1, x.shape[-1])], dim=1)  # 将speaker的特征直接拼接到文本因素特征上
-        x = self.encoder(x, x_mask)
-        mu = self.proj_m(x) * x_mask  # 基于音素隐向量预测出的mel谱图的分布，[batch_size, n_feats, max_text_length]
+        x = self.encoder(x, x_mask)  # [batch_size, n_channels, text_length], 如[1, 192, 311]
+        mu = self.proj_m(x) * x_mask  # 基于音素隐向量预测出的mel谱图的分布，[batch_size, n_feats, max_text_length]，如[1, 80, 311]
 
         x_dp = torch.detach(x)  # 将x从计算图中分离，持续时间预测器单独训练，防止反向传播时更新x；loss_duration → logw → proj_w → x_dp(停止)，loss_duration梯度反向传播时会在x_dp停止，进而不会影响x
-        logw = self.proj_w(x_dp, x_mask)  # 预测每个音素的对数域持续时间，[batch_size, 1, max_text_length]
+        logw = self.proj_w(x_dp, x_mask)  # 预测每个音素的对数域持续时间，[batch_size, 1, max_text_length]，如[1, 1, 311]
 
         return mu, logw, x_mask
