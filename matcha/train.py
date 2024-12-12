@@ -31,7 +31,7 @@ rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 log = utils.get_pylogger(__name__)
 
 
-@utils.task_wrapper
+@utils.task_wrapper  # 使用utils.task_wrapper装饰器，控制训练过程中的异常行为
 def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Trains the model. Can additionally evaluate on a testset, using best weights obtained during
     training.
@@ -44,22 +44,22 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     # set seed for random number generators in pytorch, numpy and python.random
     if cfg.get("seed"):
-        L.seed_everything(cfg.seed, workers=True)
+        L.seed_everything(cfg.seed, workers=True)  # 设置随机种子，确保训练结果可复现
 
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")  # pylint: disable=protected-access
-    datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)
+    datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)  # 实例化数据集
 
     log.info(f"Instantiating model <{cfg.model._target_}>")  # pylint: disable=protected-access
-    model: LightningModule = hydra.utils.instantiate(cfg.model)
+    model: LightningModule = hydra.utils.instantiate(cfg.model)  # 实例化模型
 
     log.info("Instantiating callbacks...")
-    callbacks: List[Callback] = utils.instantiate_callbacks(cfg.get("callbacks"))
+    callbacks: List[Callback] = utils.instantiate_callbacks(cfg.get("callbacks"))  # 实例化回调函数
 
     log.info("Instantiating loggers...")
-    logger: List[Logger] = utils.instantiate_loggers(cfg.get("logger"))
+    logger: List[Logger] = utils.instantiate_loggers(cfg.get("logger"))  # 实例化日志记录器
 
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")  # pylint: disable=protected-access
-    trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)
+    trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)  # 实例化训练器
 
     object_dict = {
         "cfg": cfg,
@@ -76,7 +76,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     if cfg.get("train"):
         log.info("Starting training!")
-        trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
+        trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))  # 模型训练
 
     train_metrics = trainer.callback_metrics
 
@@ -86,7 +86,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         if ckpt_path == "":
             log.warning("Best ckpt not found! Using current weights for testing...")
             ckpt_path = None
-        trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
+        trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)  # 模型测试
         log.info(f"Best ckpt path: {ckpt_path}")
 
     test_metrics = trainer.callback_metrics
@@ -97,7 +97,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     return metric_dict, object_dict
 
 
-@hydra.main(version_base="1.3", config_path="../configs", config_name="train.yaml")
+@hydra.main(version_base="1.3", config_path="../configs", config_name="train.yaml")  # 使用Hydra进行配置管理
 def main(cfg: DictConfig) -> Optional[float]:
     """Main entry point for training.
 
@@ -106,13 +106,13 @@ def main(cfg: DictConfig) -> Optional[float]:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    utils.extras(cfg)
+    utils.extras(cfg)  # 执行以下配置文件的校验、打印、设置标签等操作
 
     # train the model
-    metric_dict, _ = train(cfg)
+    metric_dict, _ = train(cfg)  # 执行训练过程，返回训练指标和模型对象
 
     # safely retrieve metric value for hydra-based hyperparameter optimization
-    metric_value = utils.get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))
+    metric_value = utils.get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))  # 获取优化指标
 
     # return optimized metric
     return metric_value

@@ -182,7 +182,7 @@ class MatchaTTS(BaseLightningClass):  # 🍵
             spks = self.spk_emb(spks)
 
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
-        mu_x, logw, x_mask = self.encoder(x, x_lengths, spks)
+        mu_x, logw, x_mask = self.encoder(x, x_lengths, spks)  # text encoder预测
         y_max_length = y.shape[-1]
 
         y_mask = sequence_mask(y_lengths, y_max_length).unsqueeze(1).to(x_mask)
@@ -205,35 +205,36 @@ class MatchaTTS(BaseLightningClass):  # 🍵
 
         # Compute loss between predicted log-scaled durations and those obtained from MAS
         # refered to as prior loss in the paper
-        logw_ = torch.log(1e-8 + torch.sum(attn.unsqueeze(1), -1)) * x_mask
-        dur_loss = duration_loss(logw, logw_, x_lengths)  # 计算持续时间存世
+        logw_ = torch.log(1e-8 + torch.sum(attn.unsqueeze(1), -1)) * x_mask  # 训练过程中计算音素持续时间
+        dur_loss = duration_loss(logw, logw_, x_lengths)  # 计算持续时间损失
 
         # Cut a small segment of mel-spectrogram in order to increase batch size
         #   - "Hack" taken from Grad-TTS, in case of Grad-TTS, we cannot train batch size 32 on a 24GB GPU without it
         #   - Do not need this hack for Matcha-TTS, but it works with it as well
+        # 目的是通过截取mel频谱图(spectrogram)的一个较小片段来减少内存使用，从而能够增加训练时的batch size。这个技巧最初来自Grad-TTS项目。
         if not isinstance(out_size, type(None)):
-            max_offset = (y_lengths - out_size).clamp(0)
-            offset_ranges = list(zip([0] * max_offset.shape[0], max_offset.cpu().numpy()))
+            max_offset = (y_lengths - out_size).clamp(0)  # 计算可以偏移的最大值：原始长度减去目标长度，并确保非负
+            offset_ranges = list(zip([0] * max_offset.shape[0], max_offset.cpu().numpy()))  # 为每个batch样本创建偏移范围(0到max_offset)
             out_offset = torch.LongTensor(
                 [torch.tensor(random.choice(range(start, end)) if end > start else 0) for start, end in offset_ranges]
-            ).to(y_lengths)
-            attn_cut = torch.zeros(attn.shape[0], attn.shape[1], out_size, dtype=attn.dtype, device=attn.device)
+            ).to(y_lengths)  # 为每个batch样本随机选择一个偏移量
+            attn_cut = torch.zeros(attn.shape[0], attn.shape[1], out_size, dtype=attn.dtype, device=attn.device)  # 创建新的截取后的张量
             y_cut = torch.zeros(y.shape[0], self.n_feats, out_size, dtype=y.dtype, device=y.device)
 
             y_cut_lengths = []
             for i, (y_, out_offset_) in enumerate(zip(y, out_offset)):
-                y_cut_length = out_size + (y_lengths[i] - out_size).clamp(None, 0)
+                y_cut_length = out_size + (y_lengths[i] - out_size).clamp(None, 0)  # 计算实际截取长度
                 y_cut_lengths.append(y_cut_length)
-                cut_lower, cut_upper = out_offset_, out_offset_ + y_cut_length
-                y_cut[i, :, :y_cut_length] = y_[:, cut_lower:cut_upper]
-                attn_cut[i, :, :y_cut_length] = attn[i, :, cut_lower:cut_upper]
+                cut_lower, cut_upper = out_offset_, out_offset_ + y_cut_length  # 计算截取范围，即截取的起始和结束位置
+                y_cut[i, :, :y_cut_length] = y_[:, cut_lower:cut_upper]  # 截取mel频谱图
+                attn_cut[i, :, :y_cut_length] = attn[i, :, cut_lower:cut_upper]  # 截取注意力图
 
-            y_cut_lengths = torch.LongTensor(y_cut_lengths)
-            y_cut_mask = sequence_mask(y_cut_lengths).unsqueeze(1).to(y_mask)
+            y_cut_lengths = torch.LongTensor(y_cut_lengths)  # 将实际截取长度转换为LongTensor
+            y_cut_mask = sequence_mask(y_cut_lengths).unsqueeze(1).to(y_mask)  # 创建截取后的掩码
 
-            attn = attn_cut
-            y = y_cut
-            y_mask = y_cut_mask
+            attn = attn_cut  # 使用截取后的注意力图
+            y = y_cut  # 使用截取后的mel频谱图
+            y_mask = y_cut_mask  # 使用截取后的掩码
 
         # Align encoded text with mel-spectrogram and get mu_y segment
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
@@ -243,6 +244,8 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         diff_loss, _ = self.decoder.compute_loss(x1=y, mask=y_mask, mu=mu_y, spks=spks, cond=cond)
 
         if self.prior_loss:
+            # 此先验损失假设目标y服从均值为mu_y，方差为1的正态分布
+            # 最小化负对数似然就是最大化观测数据的概率；即p(y|μ) = 1/√(2π) * exp(-(y-μ)²/2)->-log p(y|μ) = (y-μ)²/2 + 0.5*log(2π)
             prior_loss = torch.sum(0.5 * ((y - mu_y) ** 2 + math.log(2 * math.pi)) * y_mask)  # 应用掩码求和
             prior_loss = prior_loss / (torch.sum(y_mask) * self.n_feats)  # 归一化
         else:

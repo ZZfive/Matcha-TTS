@@ -109,9 +109,9 @@ class BASECFM(torch.nn.Module, ABC):
         # sample noise p(x_0)
         z = torch.randn_like(x1)  # 从先验分布中采样的随机噪声
 
-        y = (1 - (1 - self.sigma_min) * t) * z + t * x1  # 基于OT-CFM推导出的流的表达式
-        u = x1 - (1 - self.sigma_min) * z  # 因为是对ODE建模，目标向量场u就是t对时间t的导数
-        # 先使用estimator结合encoder输出的mu、y等值进一步精确预测量场，再与目标向量场u计算损失
+        y = (1 - (1 - self.sigma_min) * t) * z + t * x1  # 使用基于OT-CFM推导出的流的表达式计算出时间t时刻的流
+        u = x1 - (1 - self.sigma_min) * z  # 因为是对ODE建模，目标向量场u就是流对时间t的导数，此行计算的u就是t时刻的目标向量场
+        # y是流，mu_y是encoder预测的mel谱图，t是时间步，spks是说话人嵌入，基于estimator，也就是decoder预测出t时刻的向量场，然后与目标向量场u计算损失
         loss = F.mse_loss(self.estimator(y, mask, mu, t.squeeze(), spks), u, reduction="sum") / (
             torch.sum(mask) * u.shape[1]
         )

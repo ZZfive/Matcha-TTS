@@ -1,5 +1,6 @@
 import datetime as dt
 from pathlib import Path
+from typing import Dict, Any, Optional
 
 import IPython.display as ipd
 import numpy as np
@@ -24,14 +25,14 @@ OUTPUT_FOLDER = "synth_output"
 
 
 # 加载Matcha-TTS模型
-def load_model(checkpoint_path):
+def load_model(checkpoint_path: str) -> MatchaTTS:
     model = MatchaTTS.load_from_checkpoint(checkpoint_path, map_location=device)
     model.eval()
     return model
 
 
 # 加载Hifigan模型
-def load_vocoder(checkpoint_path):
+def load_vocoder(checkpoint_path: str) -> HiFiGAN:
     h = AttrDict(v1)
     hifigan = HiFiGAN(h).to(device)
     hifigan.load_state_dict(torch.load(checkpoint_path, map_location=device)['generator'])
@@ -42,7 +43,7 @@ def load_vocoder(checkpoint_path):
 
 # 处理文本
 @torch.inference_mode()
-def process_text(text: str):
+def process_text(text: str) -> Dict[str, Any]:
     x = torch.tensor(intersperse(text_to_sequence(text, ['english_cleaners2'])[0], 0), dtype=torch.long, device=device)[None]
     x_lengths = torch.tensor([x.shape[-1]], dtype=torch.long, device=device)
     x_phones = sequence_to_text(x.squeeze(0).tolist())  # 最终输入encoder中的音素序列
@@ -56,7 +57,8 @@ def process_text(text: str):
 
 # 合成音频
 @torch.inference_mode()
-def synthesise(model, text, n_timesteps, temperature, length_scale, spks=None):
+def synthesise(model: MatchaTTS, text: str, n_timesteps: int, temperature: float,
+               length_scale: float, spks: Optional[torch.Tensor] = None) -> Dict[str, Any]:
     text_processed = process_text(text)
     start_t = dt.datetime.now()
     output = model.synthesise(
@@ -71,15 +73,17 @@ def synthesise(model, text, n_timesteps, temperature, length_scale, spks=None):
     output.update({'start_t': start_t, **text_processed})
     return output
 
+
 # 将mel转换为音频
 @torch.inference_mode()
-def to_waveform(denoiser, mel, vocoder):
+def to_waveform(denoiser: Denoiser, mel: torch.Tensor, vocoder: HiFiGAN) -> torch.Tensor:
     audio = vocoder(mel).clamp(-1, 1)
     audio = denoiser(audio.squeeze(0), strength=0.00025).cpu().squeeze()
     return audio.cpu().squeeze()
 
+
 # 保存mel和音频
-def save_to_folder(filename: str, output: dict, folder: str):
+def save_to_folder(filename: str, output: Dict[str, Any], folder: str) -> None:
     folder = Path(folder)
     folder.mkdir(exist_ok=True, parents=True)
     np.save(folder / f'{filename}', output['mel'].cpu().numpy())
